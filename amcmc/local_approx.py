@@ -3,6 +3,7 @@
 from __future__ import division, print_function
 
 import numpy as np
+from scipy.optimize import minimize
 from scipy.spatial import cKDTree as KDTree
 
 __all__ = ["LocalLinearApproximation", "LocalQuadraticApproximation"]
@@ -69,6 +70,30 @@ class LocalLinearApproximation(object):
             preds.append(np.dot(Apred, w))
         return pred, np.concatenate(preds, axis=0)
 
+    def find_refinement_coords(self, theta):
+        theta = np.atleast_1d(theta)
+        if theta.shape != (self.ndim, ):
+            raise ValueError("dimension mismatch; theta must have shape {0}"
+                             .format((self.ndim, )))
+        dists, _ = self.tree.query(theta, self.ntot)
+        R = dists[-1]
+        inds = self.tree.query_ball_point(theta, 3*R)
+        thetas = self.theta[inds]
+
+        def cost(t):
+            if np.sum((t - theta)**2) > R**2:
+                return 1e12
+            return np.min(np.sum((t[None, :] - thetas)**2, axis=1))
+
+        def grad_cost(t):
+            r = t[None, :] - thetas
+            i = np.argmin(np.sum(r**2, axis=1))
+            return 2 * r[i]
+
+        v = minimize(cost, theta, method="L-BFGS-B", jac=grad_cost,
+                     bounds=[(t-R, t+R) for t in theta])
+        return v.x
+
     def get_ndef(self, ndim):
         return ndim + 1
 
@@ -97,3 +122,4 @@ if __name__ == "__main__":
     approx = LocalQuadraticApproximation(x, y)
     # approx = LocalLinearApproximation(x, y)
     print(approx.evaluate([0.5, 0.5], cross_validate=True))
+    print(approx.find_refinement_coords([0.5, 0.5]))
